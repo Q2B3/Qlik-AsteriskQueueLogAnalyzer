@@ -1,2 +1,3 @@
 # AsteriskQueueLog-star
-The Asterisk Queue Log analyzer
+The Asterisk Queue Log Analyzer
+for QlikView
