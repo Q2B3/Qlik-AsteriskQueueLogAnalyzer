@@ -1,0 +1,194 @@
+REM Грузим логи в память для ускорения;
+QueueLog: LOAD 
+rowno() as RecID, // на всякий случай, чтобы различать одинаковые записи
+@1, text(@2) as @2, @3, @4, @5, @6, @7, @8, 
+@9, // может быть непустым!!! 
+@10,// может быть непустым!!!  
+@11 //@11 должен быть всегда пустой
+FROM [Queue_log\queue_log.*] (txt, utf8, no labels, delimiter is '|', msq)
+;
+
+rem Формируем список внутренних звонков;
+InternalCall: LOAD DISTINCT @2 as InternalCallId
+Resident QueueLog
+Where @5='ENTERQUEUE'
+and len(@7)=3 // внутренние 3-Х значные звонки
+;
+rem обрабатываем событие DID;
+DID: LOAD 
+floor(@1/60/60/24+MakeDate(1970,1,1)) as DID.Date,
+frac((@1-43*365*24*60*60)/60/60/24) as DID.Time,
+Hour(frac(@1/(60*60*24))) as DID.Hour,
+//@1,
+@2 as CallId, 
+@3 as DID.QueueName, 
+//@4 as DID.ChannelName, //Всегда NONE
+//@5 as EventType,
+if(len(@6)>0,@6,'---') as DID.Line // что это?
+Resident QueueLog
+Where @5='DID'
+and @3<>989 // говорят что 989 - это тестовая линия
+and @3<>150 // логисты
+//and @3<>200 // Отдел продаж
+//and @3<>300 //операторы
+and @3<>400 // бухгалтерия
+//and len(@6)>0 // Исключая внутренние звонки
+and Not Exists(InternalCallId, @2)
+;
+
+DROP Table InternalCall;
+
+mapCallTime: Mapping LOAD @2 as CallId, min(@1) as CallTime
+Resident QueueLog
+Where @5='DID'
+Group by @2
+;
+
+
+ENTERQUEUE: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as ENTERQUEUE.TimeShift, 
+//frac(@1/60/60/24) as ENTERQUEUE.Time,
+@2 as CallId, 
+@3 as ENTERQUEUE.QueueName,//, 
+//@4 as ENTERQUEUE.ChannelName, //Всегда NONE
+//@5 as EventType,
+//@6,
+if(left(@7,1)='8' and len(@7)=11, '7' & mid(@7,2),if(len(@7)=10,'7' & @7, if(len(@7)>0 and @7<>'unknown',@7, Repeat('0',11)))) as ENTERQUEUE.Caller,
+@8 as ENTERQUEUE.Position
+Resident QueueLog
+Where @5='ENTERQUEUE'
+and Exists(CallId, @2)
+;
+
+RINGNOANSWER: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as RINGNOANSWER.TimeShift, 
+//frac(@1/60/60/24) as RINGNOANSWER.Time,
+@2 as CallId, 
+@3 as RINGNOANSWER.QueueName, 
+@4 as RINGNOANSWER.ChannelName,
+//@5 as EventType,
+floor(num#(@6)/1000) as RINGNOANSWER.RingTime
+Resident QueueLog
+Where @5='RINGNOANSWER'
+and Exists(CallId, @2)
+;
+
+EXITEMPTY: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as EXITEMPTY.TimeShift, 
+//frac(@1/60/60/24) as EXITEMPTY.Time,
+@2 as CallId, 
+@3 as EXITEMPTY.QueueName, //Всегда 900
+//@4 as EXITEMPTY.ChannelName,
+//@5 as EventType,
+@6 as EXITEMPTY.Position,
+@7 as EXITEMPTY.OrigPosition,
+@8 as EXITEMPTY.WaitTime
+Resident QueueLog
+Where @5='EXITEMPTY'
+and Exists(CallId, @2)
+;
+CONNECT: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as CONNECT.TimeShift, 
+//frac(@1/60/60/24) as CONNECT.Time,
+@2 as CallId, 
+@3 as CONNECT.QueueName, //Всегда 900
+@4 as CONNECT.ChannelName,
+//@5 as EventType,
+@6 as CONNECT.HoldTime,
+@7 as CONNECT.BridgedChannelUniqueId,
+@8 as CONNECT.RingTime
+Resident QueueLog
+Where @5='CONNECT'
+and Exists(CallId, @2)
+;
+COMPLETEPICKUPER: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as COMPLETEPICKUPER.TimeShift, 
+//frac(@1/60/60/24) as COMPLETEPICKUPER.Time,
+@2 as CallId, 
+@3 as COMPLETEPICKUPER.QueueName, //Всегда 900
+@4 as COMPLETEPICKUPER.ChannelName,
+//@5 as EventType,
+@6 as COMPLETEPICKUPER.HoldTime,
+@7 as COMPLETEPICKUPER.CallTime,
+@8 as COMPLETEPICKUPER.OrigPosition
+Resident QueueLog
+Where @5='COMPLETEPICKUPER'
+and Exists(CallId, @2)
+;
+COMPLETEAGENT: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as COMPLETEAGENT.TimeShift, 
+//frac(@1/60/60/24) as COMPLETEAGENT.Time,
+@2 as CallId, 
+@3 as COMPLETEAGENT.QueueName, //Всегда 900
+@4 as COMPLETEAGENT.ChannelName,
+//@5 as EventType,
+@6 as COMPLETEAGENT.HoldTime,
+@7 as COMPLETEAGENT.CallTime,
+@8 as COMPLETEAGENT.OrigPosition
+Resident QueueLog
+Where @5='COMPLETEAGENT'
+and Exists(CallId, @2)
+;
+
+COMPLETECALLER: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as COMPLETECALLER.TimeShift, 
+//frac(@1/60/60/24) as COMPLETECALLER.Time,
+@2 as CallId, 
+@3 as COMPLETECALLER.QueueName, //Всегда 900
+@4 as COMPLETECALLER.ChannelName,
+//@5 as EventType,
+@6 as COMPLETECALLER.HoldTime,
+@7 as COMPLETECALLER.CallTime,
+@8 as COMPLETECALLER.OrigPosition
+Resident QueueLog
+Where @5='COMPLETECALLER'
+and Exists(CallId, @2)
+;
+
+ABANDON: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as ABANDON.TimeShift,
+//frac(@1/60/60/24) as ABANDON.Time,
+@2 as CallId, 
+@3 as ABANDON.QueueName, //Всегда 900
+//@4 as ABANDON.ChannelName, Всегда NONE
+//@5 as EventType,
+@6 as ABANDON.Position,
+@7 as ABANDON.OrigPosition,
+@8 as ABANDON.WaitTime
+Resident QueueLog
+Where @5='ABANDON'
+and Exists(CallId, @2)
+;
+
+EXITWITHTIMEOUT: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as EXITWITHTIMEOUT.TimeShift,
+//frac(@1/60/60/24) as EXITWITHTIMEOUT.Time,
+@2 as CallId, 
+@3 as EXITWITHTIMEOUT.QueueName, //Всегда 900
+@4 as EXITWITHTIMEOUT.ChannelName,
+//@5 as EventType,
+@6 as EXITWITHTIMEOUT.Position,
+@7 as EXITWITHTIMEOUT.OrigPosition,
+@8 as EXITWITHTIMEOUT.WaitTime
+Resident QueueLog
+Where @5='EXITWITHTIMEOUT'
+and Exists(CallId, @2)
+;
+TRANSFER: LOAD 
+@1-ApplyMap('mapCallTime',@2,@1) as TRANSFER.TimeShift,
+//frac(@1/60/60/24) as TRANSFER.Time,
+@2 as CallId, 
+@3 as TRANSFER.QueueName, //Всегда 900
+@4 as TRANSFER.ChannelName,
+//@5 as EventType,
+@6 as TRANSFER.Extension,
+@7 as TRANSFER.Context,
+@8 as TRANSFER.HoldTime,
+@9 as TRANSFER.CallTime,
+@10 as TRANSFER.OrigPosition
+Resident QueueLog
+Where @5='TRANSFER'
+and Exists(CallId, @2)
+;
+
+DROP Table QueueLog;
