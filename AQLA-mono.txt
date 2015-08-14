@@ -1,0 +1,56 @@
+REM Грузим логи в память для ускорения;
+QueueLog: LOAD 
+rowno() as RecID, // на всякий случай, чтобы различать одинаковые записи
+@1, text(@2) as @2, @3, @4, @5, @6, @7, @8, 
+@9, // может быть непустым!!! 
+@10,// может быть непустым!!!  
+@11 //@11 должен быть всегда пустой
+FROM [Queue_log\queue_log.*] (txt, utf8, no labels, delimiter is '|', msq)
+;
+
+rem Формируем список внешних звонков;
+ExternalCalls: LOAD DISTINCT @2 as ExternalCallIDs Resident QueueLog
+Where @5='ENTERQUEUE' // Входим в очередь
+and len(@7)<>3 // исключая внутренние 3-Х значные звонки
+;
+rem Подбираем данные о старых клиентах из 1С;
+tmpCallers: LOAD numa, Контрагент.Код FROM [ТелефоныКонтрагенты\*.csv] (txt, utf8, embedded labels, delimiter is ',', msq) WHERE len(numa)>0;
+	mapCallerAge: MAPPING LOAD numa, 'Старый' as numa_age RESIDENT tmpCallers;
+	mapCaller1СID: MAPPING LOAD numa, Контрагент.Код RESIDENT tmpCallers;
+DROP TABLE tmpCallers;
+
+mapCallID2Line: Mapping LOAD @2 as CallId, if(len(@6)>0,@6,'---') as Line Resident QueueLog Where @5='DID';
+mapCallID2CallerID: Mapping LOAD @2 as CallId, if(left(@7,1)='8' and len(@7)=11, '7' & mid(@7,2),if(len(@7)=10,'7' & @7, @7)) as Line Resident QueueLog Where @5='ENTERQUEUE' and len(@7)>0 and @7<>'unknown';
+mapCallID2Caller1CID: Mapping LOAD @2 as CallId, applymap('mapCaller1СID',if(left(@7,1)='8' and len(@7)=11, '7' & mid(@7,2),if(len(@7)=10,'7' & @7, @7)),'---') as Line Resident QueueLog Where @5='ENTERQUEUE';
+mapCallID2CallerAge: Mapping LOAD @2 as CallId, applymap('mapCallerAge',if(left(@7,1)='8' and len(@7)=11, '7' & mid(@7,2),if(len(@7)=10,'7' & @7, @7)),'Новый') as Line Resident QueueLog Where @5='ENTERQUEUE';
+mapCallID2Duration: Mapping LOAD @2 as CallId, @7 as Duration Resident QueueLog Where @5='COMPLETEPICKUPER' or @5='COMPLETEAGENT' or @5='COMPLETECALLER';
+mapCallID2EndTime: Mapping LOAD @2 as CallId, max(@1) as EndTime Resident QueueLog Group by @2;
+
+Asterisk: LOAD *,
+Applymap('mapCallID2Line',Asterisk.CallID,'---') as Asterisk.Line,
+Applymap('mapCallID2Duration',Asterisk.CallID,0) as Asterisk.ServiceDuration,
+Applymap('mapCallID2CallerAge',Asterisk.CallID,'Новый') as Asterisk.CallerAge,
+Applymap('mapCallID2Caller1CID',Asterisk.CallID,'---') as Контрагент.Код,
+Applymap('mapCallID2CallerID',Asterisk.CallID,repeat('0',11)) as Asterisk.CallerID
+; LOAD DISTINCT 
+Date(Floor(@1/60/60/24+MakeDate(1970,1,1))) as Asterisk.CallDate,
+Time(Frac((@1-43*365*24*60*60)/60/60/24)) as Asterisk.CallTime,
+Hour(frac(@1/(60*60*24))) as Asterisk.CallHour,
+@2 as Asterisk.CallID,
+applymap('mapCallID2EndTime',@2,@1)-@1 as Asterisk.CallDuration
+; LOAD
+min(@1) as @1, 
+@2
+Resident QueueLog
+Where @5='DID'
+and @3<>989 // говорят что 989 - это тестовая линия
+and @3<>150 // логисты
+//and @3<>200 // Отдел продаж                                                                                                    ,,
+//and @3<>300 //операторы
+and @3<>400 // бухгалтерия
+//and len(@6)>0 // Исключая внутренние звонки
+and Exists(ExternalCallIDs, @2)
+GROUP BY @2
+;
+DROP TABLEs ExternalCalls, QueueLog; 
+
